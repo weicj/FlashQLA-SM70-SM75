@@ -1,3 +1,6 @@
+# Copyright (c) 2026 The Qwen team, Alibaba Group.
+# Licensed under The MIT License [see LICENSE for details]
+
 import torch
 
 
@@ -13,7 +16,7 @@ def unpack(
     for i in range(batch_size):
         start = cu_seqlens[i].item()
         end = cu_seqlens[i + 1].item()
-        y[i, :end - start] = x[0, start:end]
+        y[i, : end - start] = x[0, start:end]
     return y
 
 
@@ -28,7 +31,7 @@ def pack(
     for i in range(batch_size):
         start = cu_seqlens[i].item()
         end = cu_seqlens[i + 1].item()
-        y[0, start:end] = x[i, :end - start]
+        y[0, start:end] = x[i, : end - start]
     return y
 
 
@@ -39,9 +42,11 @@ def pad_and_reshape(
 ):
     sequence_length = x.shape[dim]
     pad_size = (chunk_size - sequence_length % chunk_size) % chunk_size
-    zeros = [0, ] * (2 * (len(x.shape) - 1 - dim))
+    zeros = [
+        0,
+    ] * (2 * (len(x.shape) - 1 - dim))
     padded = torch.nn.functional.pad(x, (*zeros, 0, pad_size))
-    return padded.reshape((*x.shape[:dim], -1, chunk_size, *x.shape[dim+1:]))
+    return padded.reshape((*x.shape[:dim], -1, chunk_size, *x.shape[dim + 1 :]))
 
 
 def fill_last_chunk_of_g(
@@ -57,7 +62,9 @@ def fill_last_chunk_of_g(
             if reverse:
                 g[:, -1, last_chunk_size - 1] += g[:, -1, -1]
             else:
-                g[:, -1, last_chunk_size:] = g[:, -1, last_chunk_size - 1:last_chunk_size]
+                g[:, -1, last_chunk_size:] = g[
+                    :, -1, last_chunk_size - 1 : last_chunk_size
+                ]
     else:
         for i in range(cu_seqlens.shape[0] - 1):
             start = cu_seqlens[i].item()
@@ -66,7 +73,11 @@ def fill_last_chunk_of_g(
             last_chunk_size = (end - start) % chunk_size
             if last_chunk_size > 0:
                 if reverse:
-                    g[i, last_chunk_idx, last_chunk_size - 1] += g[i, last_chunk_idx, -1]
+                    g[i, last_chunk_idx, last_chunk_size - 1] += g[
+                        i, last_chunk_idx, -1
+                    ]
                 else:
-                    g[i, last_chunk_idx, last_chunk_size:] = g[i, last_chunk_idx, last_chunk_size - 1:last_chunk_size]
+                    g[i, last_chunk_idx, last_chunk_size:] = g[
+                        i, last_chunk_idx, last_chunk_size - 1 : last_chunk_size
+                    ]
     return g

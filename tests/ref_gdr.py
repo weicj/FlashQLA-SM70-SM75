@@ -1,8 +1,15 @@
+# Copyright (c) 2026 The Qwen team, Alibaba Group.
+# Licensed under The MIT License [see LICENSE for details]
+
 import torch
 
-from fla.ops.utils import prepare_chunk_offsets
-
-from flav2.utils import pad_and_reshape, pack, unpack, fill_last_chunk_of_g
+from flash_qla.utils import (
+    pad_and_reshape,
+    pack,
+    unpack,
+    fill_last_chunk_of_g,
+    prepare_chunk_offsets,
+)
 
 
 def torch_cumsum(
@@ -19,9 +26,9 @@ def torch_cumsum(
     x = pad_and_reshape(x, dim=1, chunk_size=chunk_size)
 
     if reverse:
-        x = torch.flip(x, dims=(2, ))
+        x = torch.flip(x, dims=(2,))
         x = x.cumsum(dim=2)
-        x = torch.flip(x, dims=(2, ))
+        x = torch.flip(x, dims=(2,))
     else:
         x = x.cumsum(dim=2)
     x = x.reshape(batch_size, -1, num_heads)
@@ -54,11 +61,15 @@ def torch_kkt_fwd(
     g = pad_and_reshape(g, dim=1, chunk_size=chunk_size)  # [B, N, C, H]
     beta = pad_and_reshape(beta, dim=1, chunk_size=chunk_size)  # [B, N, C, H]
 
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device))
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device)
+    )
     decay_mask = torch.exp(g[:, :, :, None, :] - g[:, :, None, :, :])
     decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0)
     # decay_mask = torch.where(mask[None, None, :, :, None], decay_mask, 0.0)
-    attn = torch.einsum('bnchk, bndhk -> bnchd', k * beta.unsqueeze(-1), k) * decay_mask.swapaxes(-2, -1)  # [B, N, C, H, D]
+    attn = torch.einsum(
+        "bnchk, bndhk -> bnchd", k * beta.unsqueeze(-1), k
+    ) * decay_mask.swapaxes(-2, -1)  # [B, N, C, H, D]
     attn = attn.reshape(batch_size, -1, num_v_heads, chunk_size)[:, :num_tokens]
 
     if cu_seqlens is not None:
@@ -75,14 +86,18 @@ def torch_solve(
 
     batch_size, num_tokens, num_heads, chunk_size = x.shape
 
-    x = -pad_and_reshape(x, dim=1, chunk_size=chunk_size).swapaxes(2, 3)  # [B, N, H, C, D]
+    x = -pad_and_reshape(x, dim=1, chunk_size=chunk_size).swapaxes(
+        2, 3
+    )  # [B, N, H, C, D]
 
     for i in range(1, chunk_size):
         row = x[..., i, :i].clone()
         sub = x[..., :i, :i].clone()
         x[..., i, :i] = row + (row.unsqueeze(-1) * sub).sum(-2)
     x += torch.eye(chunk_size, dtype=x.dtype, device=x.device)
-    x = x.swapaxes(2, 3).reshape((batch_size, -1, num_heads, chunk_size))[:, :num_tokens]
+    x = x.swapaxes(2, 3).reshape((batch_size, -1, num_heads, chunk_size))[
+        :, :num_tokens
+    ]
 
     if cu_seqlens is not None:
         x = pack(x, cu_seqlens)
@@ -111,12 +126,20 @@ def torch_w_u_fwd(
     if num_k_heads != num_v_heads:
         k = k.repeat_interleave(num_v_heads // num_k_heads, dim=2)
 
-    k_beta = pad_and_reshape(k * beta.unsqueeze(-1) * g.exp().unsqueeze(-1), dim=1, chunk_size=chunk_size)  # [B, N, C, Hv, K]
-    v_beta = pad_and_reshape(v * beta.unsqueeze(-1), dim=1, chunk_size=chunk_size)  # [B, N, C, Hv, V]
+    k_beta = pad_and_reshape(
+        k * beta.unsqueeze(-1) * g.exp().unsqueeze(-1), dim=1, chunk_size=chunk_size
+    )  # [B, N, C, Hv, K]
+    v_beta = pad_and_reshape(
+        v * beta.unsqueeze(-1), dim=1, chunk_size=chunk_size
+    )  # [B, N, C, Hv, V]
     A = pad_and_reshape(A, dim=1)
 
-    w = torch.einsum('bnchd, bndhk -> bnchk', A, k_beta).reshape((batch_size, -1, num_v_heads, head_dim_k))[:, :num_tokens]
-    u = torch.einsum('bnchd, bndhk -> bnchk', A, v_beta).reshape((batch_size, -1, num_v_heads, head_dim_v))[:, :num_tokens]
+    w = torch.einsum("bnchd, bndhk -> bnchk", A, k_beta).reshape(
+        (batch_size, -1, num_v_heads, head_dim_k)
+    )[:, :num_tokens]
+    u = torch.einsum("bnchd, bndhk -> bnchk", A, v_beta).reshape(
+        (batch_size, -1, num_v_heads, head_dim_v)
+    )[:, :num_tokens]
 
     if cu_seqlens is not None:
         w = pack(w, cu_seqlens)
@@ -152,19 +175,31 @@ def torch_chunk_gdr_fwd(
     g = fill_last_chunk_of_g(g, num_tokens, cu_seqlens, chunk_size=chunk_size)
 
     if initial_state is None:
-        last_state = torch.zeros((batch_size, num_v_heads, head_dim_k, head_dim_v), dtype=g.dtype, device=g.device)
+        last_state = torch.zeros(
+            (batch_size, num_v_heads, head_dim_k, head_dim_v),
+            dtype=g.dtype,
+            device=g.device,
+        )
     else:
         last_state = initial_state.to(g.dtype, copy=True)
 
     h, vn = [], []
     for i in range(k.shape[1]):
         h.append(last_state)
-        v_new = u[:, i] - torch.einsum('bchk, bhkv -> bchv', w[:, i], last_state)
+        v_new = u[:, i] - torch.einsum("bchk, bhkv -> bchv", w[:, i], last_state)
         vn.append(v_new)
         last_state = last_state * g[:, i, -1, :, None, None].exp()
-        last_state = last_state + torch.einsum('bchk, bchv -> bhkv', k[:, i] * (g[:, i, -1:, :, None] - g[:, i, :, :, None]).exp(), v_new)
+        last_state = last_state + torch.einsum(
+            "bchk, bchv -> bhkv",
+            k[:, i] * (g[:, i, -1:, :, None] - g[:, i, :, :, None]).exp(),
+            v_new,
+        )
     h = torch.stack(h, dim=1).contiguous()
-    vn = torch.stack(vn, dim=1).reshape((batch_size, -1, num_v_heads, head_dim_v))[:, :num_tokens].contiguous()
+    vn = (
+        torch.stack(vn, dim=1)
+        .reshape((batch_size, -1, num_v_heads, head_dim_v))[:, :num_tokens]
+        .contiguous()
+    )
 
     if cu_seqlens is not None:
         vn = pack(vn, cu_seqlens)
@@ -206,13 +241,18 @@ def torch_chunk_o_fwd(
 
     q = q * scale
 
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device), diagonal=1)
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device),
+        diagonal=1,
+    )
     decay_mask = torch.exp(g[:, :, :, None, :] - g[:, :, None, :, :])
-    decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0)  # [B, N, C, D, Hv]
+    decay_mask = decay_mask.masked_fill(
+        mask[None, None, :, :, None], 0.0
+    )  # [B, N, C, D, Hv]
 
-    attn = torch.einsum('bnchk, bndhk -> bncdh', q, k) * decay_mask
-    attn_inter = torch.einsum('bnchk, bnhkv -> bnchv', q * g.exp().unsqueeze(-1), h)
-    o = attn_inter + torch.einsum('bncdh, bndhv -> bnchv', attn, v)
+    attn = torch.einsum("bnchk, bndhk -> bncdh", q, k) * decay_mask
+    attn_inter = torch.einsum("bnchk, bnhkv -> bnchv", q * g.exp().unsqueeze(-1), h)
+    o = attn_inter + torch.einsum("bncdh, bndhv -> bnchv", attn, v)
 
     o = o.reshape((batch_size, -1, num_v_heads, head_dim_v))[:, :num_tokens]
     if cu_seqlens is not None:
@@ -251,12 +291,17 @@ def torch_chunk_dv_bwd(
 
     q = q * scale
 
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device), diagonal=1)
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device),
+        diagonal=1,
+    )
     decay_mask = torch.exp(g[:, :, :, None, :] - g[:, :, None, :, :])
-    decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0)  # [B, N, C, D, Hv]
+    decay_mask = decay_mask.masked_fill(
+        mask[None, None, :, :, None], 0.0
+    )  # [B, N, C, D, Hv]
 
-    attn = torch.einsum('bnchk, bndhk -> bncdh', q, k) * decay_mask
-    dv = torch.einsum('bncdh, bnchv -> bndhv', attn, do)
+    attn = torch.einsum("bnchk, bndhk -> bncdh", q, k) * decay_mask
+    dv = torch.einsum("bncdh, bnchv -> bndhv", attn, do)
 
     dv = dv.reshape((batch_size, -1, num_v_heads, head_dim_v))[:, :num_tokens]
     if cu_seqlens is not None:
@@ -305,17 +350,29 @@ def torch_chunk_gdr_bwd(
     q = q * scale
 
     if dht is None:
-        dstate = torch.zeros((batch_size, num_v_heads, head_dim_k, head_dim_v), dtype=g.dtype, device=g.device)
+        dstate = torch.zeros(
+            (batch_size, num_v_heads, head_dim_k, head_dim_v),
+            dtype=g.dtype,
+            device=g.device,
+        )
     else:
         dstate = dht.to(g.dtype, copy=True)
-    dstate_inter = torch.einsum('bnchk, bnchv -> bnhkv', q * g.exp().unsqueeze(-1), do)
+    dstate_inter = torch.einsum("bnchk, bnchv -> bnhkv", q * g.exp().unsqueeze(-1), do)
 
     dh = []
     for i in reversed(range(k.shape[1])):
         dh.insert(0, dstate)
-        dv[:, i] += torch.einsum('bchk, bhkv -> bchv', k[:, i] * (g[:, i, -1:, :, None] - g[:, i, :, :, None]).exp(), dstate)
+        dv[:, i] += torch.einsum(
+            "bchk, bhkv -> bchv",
+            k[:, i] * (g[:, i, -1:, :, None] - g[:, i, :, :, None]).exp(),
+            dstate,
+        )
         dstate = dstate * g[:, i, -1, :, None, None].exp()
-        dstate = dstate + dstate_inter[:, i] - torch.einsum('bchk, bchv -> bhkv', w[:, i], dv[:, i])
+        dstate = (
+            dstate
+            + dstate_inter[:, i]
+            - torch.einsum("bchk, bchv -> bhkv", w[:, i], dv[:, i])
+        )
     dh = torch.stack(dh, dim=1).contiguous()
 
     dh0 = None if h0 is None else dstate
@@ -369,15 +426,20 @@ def torch_chunk_dqkwg_bwd(
     dv = pad_and_reshape(dv, dim=1, chunk_size=chunk_size)  # [B, N, C, Hv, V]
     g = fill_last_chunk_of_g(g, num_tokens, cu_seqlens, chunk_size=chunk_size)
 
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device), diagonal=1)
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device),
+        diagonal=1,
+    )
     decay_mask = torch.exp(g[:, :, :, None, :] - g[:, :, None, :, :])
-    decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0)  # [B, N, C, D, Hv]
+    decay_mask = decay_mask.masked_fill(
+        mask[None, None, :, :, None], 0.0
+    )  # [B, N, C, D, Hv]
 
     dg_last = (h * dh).sum(dim=-1).sum(dim=-1)  # [B, N, Hv]
-    ds = torch.einsum('bnchv, bndhv -> bncdh', do, v)
-    dq = torch.einsum('bnchv, bnhkv -> bnchk', do, h)
-    dk = torch.einsum('bnchv, bnhkv -> bnchk', v, dh)
-    dw = -torch.einsum('bnchv, bnhkv -> bnchk', dv, h)
+    ds = torch.einsum("bnchv, bndhv -> bncdh", do, v)
+    dq = torch.einsum("bnchv, bnhkv -> bnchk", do, h)
+    dk = torch.einsum("bnchv, bnhkv -> bnchk", v, dh)
+    dw = -torch.einsum("bnchv, bnhkv -> bnchk", dv, h)
 
     g_last = g[:, :, -1]
     dg_last *= g_last.exp()
@@ -387,14 +449,16 @@ def torch_chunk_dqkwg_bwd(
     dg -= (k * dk).sum(dim=-1)
     dg_last += (k * dk).sum(dim=-1).sum(dim=-2)
     ds *= decay_mask * scale
-    ds2 = ds * torch.einsum('bnchk, bndhk -> bncdh', q, k)
+    ds2 = ds * torch.einsum("bnchk, bndhk -> bncdh", q, k)
     dg += ds2.sum(dim=-2)
     dg -= ds2.sum(dim=-3)
-    dq += torch.einsum('bncdh, bndhk -> bnchk', ds, k)
-    dk += torch.einsum('bncdh, bnchk -> bndhk', ds, q)
+    dq += torch.einsum("bncdh, bndhk -> bnchk", ds, k)
+    dk += torch.einsum("bncdh, bnchk -> bndhk", ds, q)
     dg[:, :, -1] += dg_last
 
-    dg = fill_last_chunk_of_g(dg, num_tokens, cu_seqlens, chunk_size=chunk_size, reverse=True)
+    dg = fill_last_chunk_of_g(
+        dg, num_tokens, cu_seqlens, chunk_size=chunk_size, reverse=True
+    )
     dq = dq.reshape((batch_size, -1, num_v_heads, head_dim_k))[:, :num_tokens]
     dk = dk.reshape((batch_size, -1, num_v_heads, head_dim_k))[:, :num_tokens]
     dw = dw.reshape((batch_size, -1, num_v_heads, head_dim_k))[:, :num_tokens]
@@ -447,29 +511,33 @@ def torch_chunk_wy_bwd(
     dk1 = pad_and_reshape(dk1, dim=1, chunk_size=chunk_size)  # [B, N, C, Hv, K]
     dg1 = pad_and_reshape(dg1, dim=1, chunk_size=chunk_size)  # [B, N, C, Hv]
 
-    dA = torch.einsum('bnchk, bndhk -> bnchd', dw, k * (beta * g.exp()).unsqueeze(-1))
-    dk_beta_g = torch.einsum('bnchd, bnchk -> bndhk', A, dw)
+    dA = torch.einsum("bnchk, bndhk -> bnchd", dw, k * (beta * g.exp()).unsqueeze(-1))
+    dk_beta_g = torch.einsum("bnchd, bnchk -> bndhk", A, dw)
     dk = dk_beta_g * (beta * g.exp()).unsqueeze(-1)
     db = (dk_beta_g * k * g.exp().unsqueeze(-1)).sum(dim=-1)
     dg = (dk_beta_g * k * (g.exp() * beta).unsqueeze(-1)).sum(dim=-1)
 
-    dA += torch.einsum('bnchv, bndhv -> bnchd', du, v * beta.unsqueeze(-1))
-    dv_beta = torch.einsum('bnchd, bnchv -> bndhv', A, du)
+    dA += torch.einsum("bnchv, bndhv -> bnchd", du, v * beta.unsqueeze(-1))
+    dv_beta = torch.einsum("bnchd, bnchv -> bndhv", A, du)
     dv = dv_beta * beta.unsqueeze(-1)
     db += (dv_beta * v).sum(dim=-1)
 
-    mask = torch.triu(torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device))
+    mask = torch.triu(
+        torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=k.device)
+    )
     decay_mask = torch.exp(g[:, :, :, None, :] - g[:, :, None, :, :])
-    decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0).swapaxes(-2, -1)
+    decay_mask = decay_mask.masked_fill(mask[None, None, :, :, None], 0.0).swapaxes(
+        -2, -1
+    )
     dA = dA.masked_fill(mask[None, None, :, None, :], 0.0)
-    dA = torch.einsum('bndhc, bndhe -> bnche', A, dA)
-    dA = torch.einsum('bnchd, bnehd -> bnche', dA, A)
+    dA = torch.einsum("bndhc, bndhe -> bnche", A, dA)
+    dA = torch.einsum("bnchd, bnehd -> bnche", dA, A)
     dA = -dA * decay_mask
 
-    A = torch.einsum('bnchk, bndhk -> bnchd', k * beta.unsqueeze(-1), k)
-    dk_beta = torch.einsum('bnchd, bndhk -> bnchk', dA, k)
+    A = torch.einsum("bnchk, bndhk -> bnchd", k * beta.unsqueeze(-1), k)
+    dk_beta = torch.einsum("bnchd, bndhk -> bnchk", dA, k)
     db += (dk_beta * k).sum(dim=-1)
-    dk += torch.einsum('bnchd, bnchk -> bndhk', dA, k * beta.unsqueeze(-1))
+    dk += torch.einsum("bnchd, bnchk -> bndhk", dA, k * beta.unsqueeze(-1))
     dk += dk_beta * beta.unsqueeze(-1)
     dk += dk1
 
@@ -544,7 +612,7 @@ def chunk_gated_delta_rule_fwd(
         scale=scale,
         chunk_size=chunk_size,
     )
-    return o, h, final_state
+    return g, o, A, h, final_state
 
 
 def chunk_gated_delta_rule_bwd(
@@ -561,7 +629,6 @@ def chunk_gated_delta_rule_bwd(
     cu_seqlens: torch.Tensor = None,
     chunk_size: int = 64,
 ):
-    g = torch_cumsum(g, chunk_size=64, cu_seqlens=cu_seqlens)
     w, u = torch_w_u_fwd(
         k=k,
         v=v,

@@ -1,0 +1,7 @@
+batch_size,num_tokens,varlen
+11,33,False
+7,4321,False
+3,16789,True
+5,8192,True
+10,1024,True
+20,512,True
