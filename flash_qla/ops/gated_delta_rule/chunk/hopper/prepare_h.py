@@ -485,10 +485,9 @@ def fused_gdr_h(
         is_cp = False
     else:
         real_batch_size = len(cu_seqlens) - 1
-        chunk_offsets = prepare_chunk_offsets(cu_seqlens, chunk_size).to(
-            cu_seqlens.dtype
-        )
-        num_chunks = chunk_offsets[-1].item() if output_h else 0
+        chunk_offsets, num_chunks = prepare_chunk_offsets(cu_seqlens, chunk_size)
+        chunk_offsets = chunk_offsets.to(cu_seqlens.dtype)
+        num_chunks = num_chunks if output_h else 0
         is_varlen = True
         if num_warmup_chunks is None:
             num_warmup_chunks = torch.empty(
