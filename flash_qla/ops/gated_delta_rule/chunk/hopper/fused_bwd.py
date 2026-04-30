@@ -923,9 +923,8 @@ def fused_gdr_bwd(
         is_varlen = False
     else:
         real_batch_size = len(cu_seqlens) - 1
-        chunk_offsets = prepare_chunk_offsets(cu_seqlens, chunk_size).to(
-            cu_seqlens.dtype
-        )
+        chunk_offsets, _ = prepare_chunk_offsets(cu_seqlens, chunk_size)
+        chunk_offsets = chunk_offsets.to(cu_seqlens.dtype)
         is_varlen = True
 
     use_dht = dht is not None
