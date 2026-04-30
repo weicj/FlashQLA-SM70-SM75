@@ -45,6 +45,9 @@ def chunk_gated_delta_rule_fwd(
                 raw_cu_seqlens=cu_seqlens,
             )
         )
+    else:
+        cp_seq_map = None
+        raw_cu_seqlens = None
     o, h, final_state = fused_gdr_fwd(
         q=q,
         k=k,
