@@ -135,4 +135,4 @@ def prepare_chunk_offsets(
         dtype=cu_seqlens.dtype,
     )
     tilelang_prepare_chunk_offsets_kernel(cu_seqlens, chunk_offsets)
-    return chunk_offsets
+    return chunk_offsets, chunk_offsets[-1].item()
