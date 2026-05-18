@@ -7,15 +7,16 @@
 
 Experimental forward-inference support for Qwen-style Gated DeltaNet on SM70/SM75-class NVIDIA GPUs.
 
-This fork keeps the upstream Hopper/SM90 TileLang path intact and is intended to add a guarded legacy backend for Volta/Turing inference devices. The current runtime validation target is RTX 2080 Ti / SM75. SM70 currently has compile coverage, but V100-class runtime validation is still required before making performance claims.
+This fork keeps the upstream Hopper/SM90 TileLang path intact and adds an explicit legacy backend entry point for Volta/Turing inference devices. The current runtime validation target is RTX 2080 Ti / SM75. SM70 currently has compile coverage, but V100-class runtime validation is still required before making performance claims.
 
-## Intended Changes
+## Changes in This Fork
 
-- Add an experimental forward-only Gated DeltaNet backend for SM70/SM75-class devices.
-- Add guarded dispatch so the legacy backend is used only when the device, shape, and explicit opt-in flag match the supported path.
-- Fall back to upstream behavior for unsupported devices, unsupported shapes, and flag-disabled runs.
-- Add correctness and negative-dispatch coverage for the supported legacy path.
-- Document the supported scope, validation status, and benchmark caveats separately from upstream Hopper results.
+- Adds `flash_qla.ops.gated_delta_rule.legacy.chunk_gated_delta_rule_fwd_legacy`.
+- Adds a lazy-built CUDA extension for a forward-only SM70/SM75-class Gated DeltaNet backend.
+- Keeps the upstream Hopper/SM90 TileLang path unchanged.
+- Keeps the legacy path explicit instead of silently replacing the upstream high-level API.
+- Adds CUDA correctness tests for the supported legacy path.
+- Documents the supported scope, validation status, and benchmark caveats separately from upstream Hopper results.
 
 ## Supported Scope
 
@@ -26,11 +27,12 @@ Supported:
 - scalar-gate Gated DeltaNet
 - Qwen-style grouped-query head mapping
 - primary optimized shape: `D=128`
-- explicit opt-in guard
+- explicit legacy API entry point
 
 Not supported:
 
 - backward kernels or training
+- automatic dispatch from the upstream high-level API
 - generic support for all pre-Hopper NVIDIA GPUs
 - runtime performance claims for SM70 before V100-class validation
 - SM80/SM86/SM89 support claims
@@ -64,6 +66,12 @@ SM70 status:
 - compile check passes
 - runtime validation is pending
 - V100-class benchmarking is needed before claiming SM70 performance
+
+Fork wrapper status:
+
+- Python syntax check passes
+- CUDA tests are included under `tests/test_legacy_sm_gdn.py`
+- CUDA PyTorch runtime validation still requires a CUDA-enabled PyTorch environment
 
 ## Positioning
 
