@@ -1,3 +1,78 @@
+> [!IMPORTANT]
+> This repository is an experimental SM70/SM75 fork of [QwenLM/FlashQLA](https://github.com/QwenLM/FlashQLA).
+>
+> It is not an official FlashQLA release and does not replace the upstream Hopper/SM90 implementation.
+
+# FlashQLA-SM70-SM75
+
+Experimental forward-inference support for Qwen-style Gated DeltaNet on SM70/SM75-class NVIDIA GPUs.
+
+This fork keeps the upstream Hopper/SM90 TileLang path intact and is intended to add a guarded legacy backend for Volta/Turing inference devices. The current runtime validation target is RTX 2080 Ti / SM75. SM70 currently has compile coverage, but V100-class runtime validation is still required before making performance claims.
+
+## Intended Changes
+
+- Add an experimental forward-only Gated DeltaNet backend for SM70/SM75-class devices.
+- Add guarded dispatch so the legacy backend is used only when the device, shape, and explicit opt-in flag match the supported path.
+- Fall back to upstream behavior for unsupported devices, unsupported shapes, and flag-disabled runs.
+- Add correctness and negative-dispatch coverage for the supported legacy path.
+- Document the supported scope, validation status, and benchmark caveats separately from upstream Hopper results.
+
+## Supported Scope
+
+Supported:
+
+- forward inference only
+- SM70/SM75-class CUDA devices as the intended legacy target family
+- scalar-gate Gated DeltaNet
+- Qwen-style grouped-query head mapping
+- primary optimized shape: `D=128`
+- explicit opt-in guard
+
+Not supported:
+
+- backward kernels or training
+- generic support for all pre-Hopper NVIDIA GPUs
+- runtime performance claims for SM70 before V100-class validation
+- SM80/SM86/SM89 support claims
+- automatic default dispatch for non-Hopper devices
+
+## Current Validation
+
+Runtime validation was performed on RTX 2080 Ti / SM75.
+
+Standalone kernel timing for a Qwen-like shape:
+
+- `B=1, T=512, Hq=16, Hv=32, D=128`
+- control recurrent path: about `1.126 ms`
+- optimized legacy path on SM75: about `0.520-0.533 ms`
+- GDN-stage speedup: about `2.1x`
+
+GGUF runtime profiling on SM75:
+
+- default fused GDN: `406.656 ms`
+- legacy fast path: `195.105 ms`
+- GDN-stage speedup: about `2.08x`
+
+Whole-request impact under the same server parameters:
+
+- prefill: `+7.17%`
+- decode: `+0.61%`
+- wall time: `-3.49%`
+
+SM70 status:
+
+- compile check passes
+- runtime validation is pending
+- V100-class benchmarking is needed before claiming SM70 performance
+
+## Positioning
+
+This fork is meant to make the SM70/SM75 experiment reproducible and reviewable. It should be treated as an upstreamable experimental branch, not as a separate long-term replacement for FlashQLA.
+
+---
+
+The original upstream README follows below.
+
 <p align="center">
     <img src="https://qianwen-res.oss-cn-beijing.aliyuncs.com/flashqla/flashqla.png" width="1000"/>
 <p>
